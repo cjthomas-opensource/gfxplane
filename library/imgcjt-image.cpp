@@ -1,0 +1,470 @@
+// Simple image rendering and I/O library - Image and drawing primitives.
+// Written by Christopher Thomas.
+// This is a quick and dirty library for 2D graphics and PPM/PGM/PAM file I/O.
+
+//
+// Includes
+
+#include "imgcjt.h"
+
+using namespace imgcjt;
+
+
+
+//
+// ARGB pixel manipulation functions.
+
+
+uint64_t imgcjt::pix_from_argb_components(
+  uint16_t a, uint16_t r, uint16_t g, uint16_t b)
+{
+  uint64_t pixval, scratch;
+
+  pixval = 0;
+
+  scratch = a;
+  pixval |= scratch << 48;
+
+  scratch = r;
+  pixval |= scratch << 32;
+
+  scratch = g;
+  pixval |= scratch << 16;
+
+  scratch = b;
+  pixval |= scratch;
+
+  return pixval;
+}
+
+
+
+void imgcjt::argb_components_from_pix(uint64_t pixval,
+  uint16_t &a, uint16_t &r, uint16_t &g, uint16_t &b)
+{
+  uint64_t scratch;
+
+  scratch = (pixval >> 48) & 0xffff;
+  a = (uint16_t) scratch;
+
+  scratch = (pixval >> 32) & 0xffff;
+  r = (uint16_t) scratch;
+
+  scratch = (pixval >> 16) & 0xffff;
+  g = (uint16_t) scratch;
+
+  scratch = pixval & 0xffff;
+  b = (uint16_t) scratch;
+}
+
+
+
+// NOTE - By convention, alpha 0 is transparent and alpha 1 is opaque.
+// We need to explicitly specify the maximum value for alpha.
+
+uint64_t imgcjt::pix_alpha_blend(
+  uint64_t pixover, uint64_t pixunder, uint16_t maxval)
+{
+  uint64_t a1, r1, g1, b1, a2, r2, g2, b2, aout, rout, gout, bout, max64;
+  uint64_t undercoeff;
+  uint16_t atemp, rtemp, gtemp, btemp;
+  uint64_t pixout;
+
+  // Promote everything to 64-bit. In theory 32-bit is enough, but I don't
+  // want to find out the hard way that there's an edge case, and we should
+  // have 64-bit native math on all processors these days anyways.
+
+  argb_components_from_pix(pixover, atemp, rtemp, gtemp, btemp);
+  a1 = atemp;
+  r1 = rtemp;
+  g1 = gtemp;
+  b1 = btemp;
+
+  argb_components_from_pix(pixunder, atemp, rtemp, gtemp, btemp);
+  a2 = atemp;
+  r2 = rtemp;
+  g2 = gtemp;
+  b2 = btemp;
+
+  max64 = maxval;
+
+  // Formulae:
+  //   Aout = A1 + A2 (1 - A1)
+  //   cout = [ c1 A1 + c2 A2 (1 - A1) ] / Aout
+  //
+  // Remember A = a/maxval, or a = A * maxval.
+  // So:
+  //
+  // Aout * maxval = A1 * maxval + A2 * maxval * (maxval - A1 * maxval) / max
+  // aout = a1 + a2 * (maxval - a1) / maxval
+  //
+  // cout = [ c1 A1*max + c2 A2*max*(max - A1*max)/max ] / Aout*max
+  // cout = [ c1 a1 + c2 a2 (maxval - a1)/maxval ] / aout
+
+
+  // Precompute "a2 * (maxval - a1) / maxval".
+  // We'll add half maxval to turn truncation into rounding. The downside
+  // is that we'll have to clamp the computed values afterward.
+
+  undercoeff = a2 * (max64 - a1);
+  undercoeff = (undercoeff + (max64 >> 1)) / max64;
+
+  // Compute the output alpha and component values.
+
+  aout = a1 + undercoeff;
+  if (aout > max64) aout = max64;
+
+  rout = (r1 * a1 + r2 * undercoeff) / aout;
+  gout = (g1 * a1 + g2 * undercoeff) / aout;
+  bout = (b1 * a1 + b2 * undercoeff) / aout;
+
+  if (rout > max64) rout = max64;
+  if (gout > max64) gout = max64;
+  if (bout > max64) bout = max64;
+
+  // Since all of these were clamped at maxval, they all are 16-bit compatible.
+  atemp = (uint16_t) aout;
+  rtemp = (uint16_t) rout;
+  gtemp = (uint16_t) gout;
+  btemp = (uint16_t) bout;
+
+  pixout = pix_from_argb_components(atemp, rtemp, gtemp, btemp);
+
+  return pixout;
+}
+
+
+
+//
+// Class methods.
+// ARGB graphics plane with 16-bit components.
+// Adequate for just about all of my use-cases.
+//
+
+
+//
+// Constructor and destructor.
+
+imgcjt::gfxplane::gfxplane(long new_width, long new_height,
+  uint16_t new_maxval)
+{
+  uint64_t pixcount;
+
+  width = new_width;
+  height = new_height;
+  maxval = new_maxval;
+
+  // Force sanity.
+  if (width < 1) width = 1;
+  if (height < 1) height = 1;
+  if (maxval < 1) maxval = 1;
+
+  // Store a uint64_t version for array indexing.
+  pitch = width;
+
+  // Allocate the frame buffer.
+  pixcount = height;
+  pixcount *= pitch;
+  pixdata.resize(pixcount, defaultpixval);
+}
+
+
+
+// Default destructor is fine.
+
+
+
+//
+// Accessors.
+
+long imgcjt::gfxplane::get_width(void)
+{ return width; }
+
+long imgcjt::gfxplane::get_height(void)
+{ return height; }
+
+uint16_t imgcjt::gfxplane::get_maxval(void)
+{ return maxval; }
+
+
+
+//
+// Helper functions for drawing primitives.
+// The idea is to avoid having to duplicate nontrivial rendering logic.
+
+
+// Rectangle.
+
+void imgcjt::gfxplane::helper_rect(long h1, long v1, long h2, long v2,
+  uint64_t pixval, bool want_blend)
+{
+  long h, v, scratchlong;
+  uint64_t rowstart, oset, scratch64;
+  uint64_t thispix;
+
+  // Force ordering.
+
+  if (h1 > h2)
+  {
+    scratchlong = h1;
+    h1 = h2;
+    h2 = scratchlong;
+  }
+
+  if (v1 > v2)
+  {
+    scratchlong = v1;
+    v1 = v2;
+    v2 = scratchlong;
+  }
+
+  // Clamp to the image boundary.
+
+  if (h1 < 0) h1 = 0;
+  if (h1 >= width) h1 = width - 1;
+  if (h2 < 0) h2 = 0;
+  if (h2 >= width) h2 = width - 1;
+
+  if (v1 < 0) v1 = 0;
+  if (v1 >= height) v1 = height - 1;
+  if (v2 < 0) v2 = 0;
+  if (v2 >= height) v2 = height - 1;
+
+
+  // Render the rectangle, optionally blending.
+  // NOTE - Counting on optimization to pull the "if" statement outside
+  // the loop.
+
+  rowstart = v1;
+  rowstart *= pitch;
+  scratch64 = h1;
+  rowstart += scratch64;
+
+  for (v = v1; v <= v2; v++)
+  {
+    oset = rowstart;
+    for (h = h1; h <= h2; h++)
+    {
+      if (want_blend)
+      {
+        thispix = pixdata[oset];
+        thispix = pix_alpha_blend(pixval, thispix, maxval);
+        pixdata[oset] = thispix;
+      }
+      else
+        pixdata[oset] = pixval;
+
+      oset++;
+    }
+    rowstart += pitch;
+  }
+}
+
+
+
+// Line.
+// FIXME - Add a "want anti-alias" flag here at some point.
+
+void imgcjt::gfxplane::helper_line(long h1, long v1, long h2, long v2,
+  uint64_t pixval, bool want_blend)
+{
+  // FIXME - NYI. Copy Bresenham code from my old SDL wrapper library.
+}
+
+
+
+// Copy/blend blit.
+
+void imgcjt::gfxplane::helper_copy(gfxplane &src, long h1, long v1,
+  long h2, long v2, long hdest, long vdest, bool want_blend)
+{
+  // FIXME - NYI.
+  // Do bounds checking on source and destination, clip, and then iterate
+  // in the same manner as the rectangle code.
+}
+
+
+
+//
+// Pixel primitives.
+
+
+void imgcjt::gfxplane::setpix(long h, long v, uint64_t pixval)
+{
+  uint64_t h64, v64, oset;
+
+  if ( (h >= 0) && (h < width) && (v >= 0) && (v < height) )
+  {
+    h64 = h;
+    v64 = v;
+    oset = (v64 * pitch) + h64;
+
+    pixdata[oset] = pixval;
+  }
+}
+
+
+
+void imgcjt::gfxplane::setpix_argb(long h, long v,
+    uint16_t a, uint16_t r, uint16_t g, uint16_t b)
+{
+  setpix( h, v, pix_from_argb_components(a, r, g, b) );
+}
+
+
+
+uint64_t imgcjt::gfxplane::getpix(long h, long v)
+{
+  uint64_t h64, v64, oset, pixval;
+
+  pixval = defaultpixval;
+
+  if ( (h >= 0) && (h < width) && (v >= 0) && (v < height) )
+  {
+    h64 = h;
+    v64 = v;
+    oset = (v64 * pitch) + h64;
+
+    pixval = pixdata[oset];
+  }
+
+  return pixval;
+}
+
+
+
+void imgcjt::gfxplane::getpix_argb(long h, long v,
+  uint16_t &a, uint16_t &r, uint16_t &g, uint16_t &b)
+{
+  uint64_t pixval;
+
+  pixval = getpix(h, v);
+
+  argb_components_from_pix(pixval, a, r, g, b);
+}
+
+
+
+void imgcjt::gfxplane::blendpix(long h, long v, uint64_t pixover)
+{
+  uint64_t h64, v64, oset;
+  uint64_t pixval;
+
+  if ( (h >= 0) && (h < width) && (v >= 0) && (v < height) )
+  {
+    h64 = h;
+    v64 = v;
+    oset = (v64 * pitch) + h64;
+
+    pixval = pixdata[oset];
+    pixval = pix_alpha_blend(pixover, pixval, maxval);
+    pixdata[oset] = pixval;
+  }
+}
+
+
+void imgcjt::gfxplane::blendpix_argb(long h, long v,
+  uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover)
+{
+  blendpix( h, v, pix_from_argb_components(aover, rover, gover, bover) );
+}
+
+
+
+//
+// Rectangle primitives.
+
+
+void imgcjt::gfxplane::setrect(long h1, long v1, long h2, long v2,
+  uint64_t pixval)
+{
+  helper_rect(h1, v1, h2, v2, pixval, false);
+}
+
+
+
+void imgcjt::gfxplane::setrect_argb(long h1, long v1, long h2, long v2,
+  uint16_t a, uint16_t r, uint16_t g, uint16_t b)
+{
+  setrect( h1, v1, h2, v2, pix_from_argb_components(a, r, g, b) );
+}
+
+
+
+void imgcjt::gfxplane::blendrect(long h1, long v1, long h2, long v2,
+  uint64_t pixover)
+{
+  helper_rect(h1, v1, h2, v2, pixover, true);
+}
+
+
+
+void imgcjt::gfxplane::blendrect_argb(long h1, long v1, long h2, long v2,
+  uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover)
+{
+  blendrect( h1, v1, h2, v2,
+    pix_from_argb_components(aover, rover, gover, bover) );
+}
+
+
+
+//
+// Lines.
+// FIXME - Add AA line variants at some point.
+
+
+void imgcjt::gfxplane::setline(long h1, long v1, long h2, long v2,
+  uint64_t pixval)
+{
+  helper_line(h1, v1, h2, v2, pixval, false);
+}
+
+
+
+void imgcjt::gfxplane::setline_argb(long h1, long v1, long h2, long v2,
+  uint16_t a, uint16_t r, uint16_t g, uint16_t b)
+{
+  setline( h1, v1, h2, v2, pix_from_argb_components(a, r, g, b) );
+}
+
+
+
+void imgcjt::gfxplane::blendline(long h1, long v1, long h2, long v2,
+  uint64_t pixover)
+{
+  helper_line(h1, v1, h2, v2, pixover, true);
+}
+
+
+
+void imgcjt::gfxplane::blendline_argb(long h1, long v1, long h2, long v2,
+  uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover)
+{
+  blendline( h1, v1, h2, v2,
+    pix_from_argb_components(aover, rover, gover, bover) );
+}
+
+
+
+//
+// Compositing (for sprites and such).
+
+
+void imgcjt::gfxplane::copyfrom(gfxplane &src,
+  long h1, long v1, long h2, long v2, long hdest, long vdest)
+{
+  helper_copy(src, h1, v1, h2, v2, hdest, vdest, false);
+}
+
+
+
+void imgcjt::gfxplane::blendfrom(gfxplane &src,
+  long h1, long v1, long h2, long v2, long hdest, long vdest)
+{
+  helper_copy(src, h1, v1, h2, v2, hdest, vdest, true);
+}
+
+
+
+//
+// This is the end of the file.
