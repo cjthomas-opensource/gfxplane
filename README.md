@@ -17,15 +17,15 @@ mandelbrot set", not "make a video game").
 ## Folders
 
 `library` - The library itself. Makefile targets:
-  `clean` - Remove the local copy of the library binary.
-  `debug` - Compile a version of the binary with no optimization.
-  `default` - Compile the optimized version of the binary.
-  `install` - Copy the binary to the `$(APPROOT)/lib` folder and the header to `$(APPROOT)/include`.
+* `clean` - Remove the local copy of the library binary.
+* `debug` - Compile a version of the binary with no optimization.
+* `default` - Compile the optimized version of the binary.
+* `install` - Copy the binary to the `$(APPROOT)/lib` folder and the header to `$(APPROOT)/include`.
 
 `test` - Test programs. Makefile targets:
-  `all` - Build all of the test programs.
-  `clean` - Remove the test program binaries.
-  `outclean` - Remove the output images.
-  `run` - Run the test program binaries, generating output images.
+* `all` - Build all of the test programs.
+* `clean` - Remove the test program binaries.
+* `outclean` - Remove the output images.
+* `run` - Run the test program binaries, generating output images.
 
 _(This is the end of the file.)_
