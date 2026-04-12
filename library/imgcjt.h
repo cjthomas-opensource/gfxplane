@@ -89,6 +89,10 @@ public:
   uint16_t get_maxval(void);
 
 
+  // Miscellaneous.
+  void rescale_maxval(uint16_t new_maxval);
+
+
   // Drawing primitives.
 
   // Pixels.

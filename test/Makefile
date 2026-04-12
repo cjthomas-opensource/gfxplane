@@ -13,13 +13,14 @@ LDFLAGS=-L$(APPROOT)/lib -limgcjt
 # Order of linking flags also matters.
 
 
-all: mandel conlife
+all: mandel conlife grad
 
 force: clean all
 
 clean:
 	rm -f mandel
 	rm -f conlife
+	rm -f grad
 
 outclean:
 	rm -f output/*
@@ -27,6 +28,7 @@ outclean:
 run: all
 	./mandel
 	./conlife
+	./grad
 
 
 # Mandelbrot set generator.
@@ -38,6 +40,10 @@ mandel: mandel.cpp
 # Tests pixel reads and a subset of file writes.
 conlife: conlife.cpp
 	$(GPP) $(CFLAGS) conlife.cpp $(LDFLAGS) -o conlife
+
+# Gradient test for maxval rescaling.
+grad: grad.cpp
+	$(GPP) $(CFLAGS) grad.cpp $(LDFLAGS) -o grad
 
 
 #

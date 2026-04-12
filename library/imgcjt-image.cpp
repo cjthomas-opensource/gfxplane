@@ -189,6 +189,87 @@ uint16_t imgcjt::gfxplane::get_maxval(void)
 
 
 //
+// Miscellaneous.
+
+void imgcjt::gfxplane::rescale_maxval(uint16_t new_maxval)
+{
+  std::vector<uint16_t> lut_old_to_new;
+  uint32_t thisval, oldmax32, newmax32;
+  long h, v, midx;
+  uint16_t a, r, g, b;
+
+  // Promote to 32-bit.
+  // In the worst case, we're computing (maxval+1)*(maxval)+(maxval>>1)
+  // for 0xffff. That gives 0xffff7fff.
+  oldmax32 = maxval;
+  newmax32 = new_maxval;
+
+  // Build a lookup table so that we aren't doing a division for every
+  // pixel.
+
+  lut_old_to_new.resize(oldmax32, 0);
+
+  for (midx = 0; midx <= oldmax32; midx++)
+  {
+    thisval = midx;
+
+    if (newmax32 <= oldmax32)
+    {
+      // Multiple input values per output value.
+      // Make each output bin have the same number of inputs.
+      thisval *= newmax32 + 1;
+      thisval /= oldmax32 + 1; // Truncate downward.
+    }
+    else
+    {
+      // Multiple possible output values per input value.
+      // Force the extreme values to map to each other.
+      thisval *= newmax32;
+      thisval += oldmax32 >> 1; // Round rather than truncate.
+      thisval /= oldmax32;
+    }
+
+    // Clamp just in case there's an edge case.
+    if (thisval > newmax32)
+      thisval = newmax32;
+
+    lut_old_to_new[midx] = thisval;
+  }
+
+  // Remap image components.
+
+  a = 0;
+  r = 0;
+  g = 0;
+  b = 0;
+
+  for (v = 0; v < height; v++)
+    for (h = 0; h < width; h++)
+    {
+      getpix_argb(h, v, a, r, g, b);
+
+      // Clamp just in case of bogus values in the array.
+      if (a > maxval) a = maxval;
+      if (r > maxval) r = maxval;
+      if (g > maxval) g = maxval;
+      if (b > maxval) b = maxval;
+
+      a = lut_old_to_new[a];
+      r = lut_old_to_new[r];
+      g = lut_old_to_new[g];
+      b = lut_old_to_new[b];
+
+      // NOTE - We're counting on this not clamping to the old maxval.
+      setpix_argb(h, v, a, r, g, b);
+    }
+
+  // Update metadata.
+  maxval = new_maxval;
+}
+
+
+
+//
 // Helper functions for drawing primitives.
 // The idea is to avoid having to duplicate nontrivial rendering logic.
 
