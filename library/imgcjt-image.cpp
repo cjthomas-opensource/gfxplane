@@ -12,6 +12,16 @@ using namespace imgcjt;
 
 
 //
+// Private Macros
+
+#define BLEND_YES true
+#define BLEND_NO false
+#define AA_YES true
+#define AA_NO false
+
+
+
+//
 // ARGB pixel manipulation functions.
 
 
@@ -114,9 +124,17 @@ uint64_t imgcjt::pix_alpha_blend(
   aout = a1 + undercoeff;
   if (aout > max64) aout = max64;
 
-  rout = (r1 * a1 + r2 * undercoeff) / aout;
-  gout = (g1 * a1 + g2 * undercoeff) / aout;
-  bout = (b1 * a1 + b2 * undercoeff) / aout;
+  // If aout is zero, it means a1 and a2 are both zero (fully transparent).
+  // Copy the bottom colour in that circumstance.
+  rout = r2;
+  gout = g2;
+  bout = b2;
+  if (aout > 0)
+  {
+    rout = (r1 * a1 + r2 * undercoeff) / aout;
+    gout = (g1 * a1 + g2 * undercoeff) / aout;
+    bout = (b1 * a1 + b2 * undercoeff) / aout;
+  }
 
   if (rout > max64) rout = max64;
   if (gout > max64) gout = max64;
@@ -344,12 +362,167 @@ void imgcjt::gfxplane::helper_rect(long h1, long v1, long h2, long v2,
 
 
 // Line.
-// FIXME - Add a "want anti-alias" flag here at some point.
 
 void imgcjt::gfxplane::helper_line(long h1, long v1, long h2, long v2,
-  uint64_t pixval, bool want_blend)
+  uint64_t pixval, bool want_blend, bool want_aa)
 {
-  // FIXME - NYI. Copy Bresenham code from my old SDL wrapper library.
+  // NOTE - Using an implementation that's as simple and clean as possible.
+  // This means it will be slower than an optimized implementation.
+  // Specifics:
+  // - Treating H and V as functions of line coordinate T.
+  // - Wrapping setpix to handle rendering.
+  // - Drawing off-screen parts of the line instead of doing clipping.
+  // - Anti-aliasing alpha is the Bresenham error (or 1-error).
+
+  long h, dh, hinc, v, dv, vinc;
+  uint64_t t, tmax, herr, verr, dh64, dv64;
+  uint16_t a, r, g, b;
+  uint64_t max64, acurrent, anext, newpixval, thiserr, maxerr;
+  bool h_major;
+
+  // Initialize Bresenham parameters.
+
+  dh = h2 - h1;
+  hinc = 1;
+  if (0 > dh)
+  {
+    dh = -dh;
+    hinc = -hinc;
+  }
+
+  dv = v2 - v1;
+  vinc = 1;
+  if (0 > dv)
+  {
+    dv = -dv;
+    vinc = -vinc;
+  }
+
+  // dh and dv are guaranteed non-negative now.
+
+  dh64 = dh;
+  dv64 = dv;
+
+  tmax = dh64;
+  h_major = true;
+  if (dv64 > tmax )
+  {
+    tmax = dv64;
+    h_major = false;
+  }
+
+
+  // Initialize line-drawing.
+
+  h = h1;
+  v = v1;
+
+  // If we're not anti-aliasing, start in the middle so that the end
+  // segments are equal size.
+  herr = tmax >> 1;
+  verr = tmax >> 1;
+
+  // Avoid dividing by zero even if dh = dv = 0 or 1.
+  maxerr = 1;
+  if (tmax >= 2)
+    maxerr = tmax - 1;
+
+  // If we're anti-aliasing, start at zero so that we only render on the
+  // endpoint pixels, not past them.
+  if (want_aa)
+  {
+    herr = 0;
+    verr = 0;
+  }
+
+  // Avoid compiler warnings.
+  a = 0;
+  r = 0;
+  g = 0;
+  b = 0;
+
+  // Cache a 64-bit version of maxval.
+  max64 = maxval;
+
+
+  // Draw the line.
+
+  for (t = 0; t <= tmax; t++)
+  {
+    // Render this pixel.
+    // The compiler should pull this if block outside the loop to optimize it.
+
+    if (want_aa)
+    {
+      // Compute the anti-aliased alpha values based on the minor axis error.
+      thiserr = herr;
+      if (h_major)
+        thiserr = verr;
+
+      argb_components_from_pix( pixval, a, r, g, b );
+
+      // Force opaque if we don't want blending. AA still uses blending.
+      if (!want_blend)
+        a = maxval;
+
+      // We already guaranteed that maxerr is safe.
+      // An error of 0 gives an alpha of maxval (opaque).
+
+      acurrent = a;
+      acurrent *= maxerr - thiserr;
+      acurrent /= maxerr;
+
+      anext = a;
+      anext *= thiserr;
+      anext /= maxerr;
+
+      // Shouldn't ever be needed, but force sanity.
+      if (acurrent > max64)
+         acurrent = max64;
+      if (anext > max64)
+         acurrent = max64;
+
+
+      // We're always blending when rendering, with or without source alpha.
+
+      newpixval = pix_from_argb_components( (uint16_t) acurrent, r, g, b );
+      blendpix(h, v, newpixval);
+
+      newpixval = pix_from_argb_components( (uint16_t) anext, r, g, b );
+      // Increment the minor axis.
+      if (h_major)
+        blendpix(h, v + vinc, newpixval);
+      else
+        blendpix(h + hinc, v, newpixval);
+    }
+    else
+    {
+      // No anti-aliasing.
+      if (want_blend)
+        blendpix(h, v, pixval);
+      else
+        setpix(h, v, pixval);
+    }
+
+
+    // Update position.
+
+    herr += dh64;
+    // Should happen 0 or 1 times. Tolerate "tmax = 0" too.
+    if (herr >= tmax)
+    {
+      h += hinc;
+      herr -= tmax;
+    }
+
+    verr += dv64;
+    // Should happen 0 or 1 times. Tolerate "tmax = 0" too.
+    if (verr >= tmax)
+    {
+      v += vinc;
+      verr -= tmax;
+    }
+  }
 }
 
 
@@ -459,7 +632,7 @@ void imgcjt::gfxplane::blendpix_argb(long h, long v,
 void imgcjt::gfxplane::setrect(long h1, long v1, long h2, long v2,
   uint64_t pixval)
 {
-  helper_rect(h1, v1, h2, v2, pixval, false);
+  helper_rect(h1, v1, h2, v2, pixval, BLEND_NO);
 }
 
 
@@ -475,7 +648,7 @@ void imgcjt::gfxplane::setrect_argb(long h1, long v1, long h2, long v2,
 void imgcjt::gfxplane::blendrect(long h1, long v1, long h2, long v2,
   uint64_t pixover)
 {
-  helper_rect(h1, v1, h2, v2, pixover, true);
+  helper_rect(h1, v1, h2, v2, pixover, BLEND_YES);
 }
 
 
@@ -491,13 +664,12 @@ void imgcjt::gfxplane::blendrect_argb(long h1, long v1, long h2, long v2,
 
 //
 // Lines.
-// FIXME - Add AA line variants at some point.
 
 
 void imgcjt::gfxplane::setline(long h1, long v1, long h2, long v2,
   uint64_t pixval)
 {
-  helper_line(h1, v1, h2, v2, pixval, false);
+  helper_line(h1, v1, h2, v2, pixval, BLEND_NO, AA_NO);
 }
 
 
@@ -510,10 +682,26 @@ void imgcjt::gfxplane::setline_argb(long h1, long v1, long h2, long v2,
 
 
 
+void imgcjt::gfxplane::setline_aa(long h1, long v1, long h2, long v2,
+  uint64_t pixval)
+{
+  helper_line(h1, v1, h2, v2, pixval, BLEND_NO, AA_YES);
+}
+
+
+
+void imgcjt::gfxplane::setline_aa_argb(long h1, long v1, long h2, long v2,
+  uint16_t a, uint16_t r, uint16_t g, uint16_t b)
+{
+  setline_aa( h1, v1, h2, v2, pix_from_argb_components(a, r, g, b) );
+}
+
+
+
 void imgcjt::gfxplane::blendline(long h1, long v1, long h2, long v2,
   uint64_t pixover)
 {
-  helper_line(h1, v1, h2, v2, pixover, true);
+  helper_line(h1, v1, h2, v2, pixover, BLEND_YES, AA_NO);
 }
 
 
@@ -527,6 +715,23 @@ void imgcjt::gfxplane::blendline_argb(long h1, long v1, long h2, long v2,
 
 
 
+void imgcjt::gfxplane::blendline_aa(long h1, long v1, long h2, long v2,
+  uint64_t pixover)
+{
+  helper_line(h1, v1, h2, v2, pixover, BLEND_YES, AA_YES);
+}
+
+
+
+void imgcjt::gfxplane::blendline_aa_argb(long h1, long v1, long h2, long v2,
+  uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover)
+{
+  blendline_aa( h1, v1, h2, v2,
+    pix_from_argb_components(aover, rover, gover, bover) );
+}
+
+
+
 //
 // Compositing (for sprites and such).
 
@@ -534,7 +739,7 @@ void imgcjt::gfxplane::blendline_argb(long h1, long v1, long h2, long v2,
 void imgcjt::gfxplane::copyfrom(gfxplane &src,
   long h1, long v1, long h2, long v2, long hdest, long vdest)
 {
-  helper_copy(src, h1, v1, h2, v2, hdest, vdest, false);
+  helper_copy(src, h1, v1, h2, v2, hdest, vdest, BLEND_NO);
 }
 
 
@@ -542,7 +747,7 @@ void imgcjt::gfxplane::copyfrom(gfxplane &src,
 void imgcjt::gfxplane::blendfrom(gfxplane &src,
   long h1, long v1, long h2, long v2, long hdest, long vdest)
 {
-  helper_copy(src, h1, v1, h2, v2, hdest, vdest, true);
+  helper_copy(src, h1, v1, h2, v2, hdest, vdest, BLEND_YES);
 }
 
 

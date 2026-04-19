@@ -72,9 +72,8 @@ protected:
   // The idea is to avoid having to duplicate nontrivial rendering logic.
   void helper_rect(long h1, long v1, long h2, long v2,
     uint64_t pixval, bool want_blend);
-  // FIXME - Add a "want anti-alias" flag here at some point.
   void helper_line(long h1, long v1, long h2, long v2,
-    uint64_t pixval, bool want_blend);
+    uint64_t pixval, bool want_blend, bool want_aa);
   void helper_copy(gfxplane &src, long h1, long v1, long h2, long v2,
     long hdest, long vdest, bool want_blend);
 
@@ -120,14 +119,19 @@ public:
     uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover);
 
   // Lines.
-  // FIXME - Add AA line variants at some point.
 
   void setline(long h1, long v1, long h2, long v2, uint64_t pixval);
   void setline_argb(long h1, long v1, long h2, long v2,
     uint16_t a, uint16_t r, uint16_t g, uint16_t b);
+  void setline_aa(long h1, long v1, long h2, long v2, uint64_t pixval);
+  void setline_aa_argb(long h1, long v1, long h2, long v2,
+    uint16_t a, uint16_t r, uint16_t g, uint16_t b);
 
   void blendline(long h1, long v1, long h2, long v2, uint64_t pixover);
   void blendline_argb(long h1, long v1, long h2, long v2,
+    uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover);
+  void blendline_aa(long h1, long v1, long h2, long v2, uint64_t pixover);
+  void blendline_aa_argb(long h1, long v1, long h2, long v2,
     uint16_t aover, uint16_t rover, uint16_t gover, uint16_t bover);
 
   // Compositing (for sprites and such).
