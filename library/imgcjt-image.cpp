@@ -69,6 +69,36 @@ void imgcjt::argb_components_from_pix(uint64_t pixval,
 
 
 
+// These are used when processing indexed colourmaps, among other things.
+// The idea is to keep implementation details opaque while avoiding full
+// component extraction/packing.
+
+uint64_t imgcjt::pix_merge_alpha_rgb(uint64_t alpha_src, uint64_t rgb_src)
+{
+  uint64_t alpha_mask;
+
+  alpha_mask = 0xffff;
+  alpha_mask <<= 48;
+
+  return (alpha_src & alpha_mask) | (rgb_src & (~alpha_mask));
+}
+
+
+
+void imgcjt::pix_split_alpha_rgb(uint64_t pixval,
+  uint64_t &alpha_part, uint64_t &rgb_part)
+{
+  uint64_t alpha_mask;
+
+  alpha_mask = 0xffff;
+  alpha_mask <<= 48;
+
+  alpha_part = pixval & alpha_mask;
+  rgb_part = pixval & (~alpha_mask);
+}
+
+
+
 // NOTE - By convention, alpha 0 is transparent and alpha 1 is opaque.
 // We need to explicitly specify the maximum value for alpha.
 
@@ -209,6 +239,9 @@ uint16_t imgcjt::gfxplane::get_maxval(void)
 //
 // Miscellaneous.
 
+// All blending operations assume consistent maxval values.
+// The user can call this to rescale an image's components if necessary.
+
 void imgcjt::gfxplane::rescale_maxval(uint16_t new_maxval)
 {
   std::vector<uint16_t> lut_old_to_new;
@@ -317,16 +350,17 @@ void imgcjt::gfxplane::helper_rect(long h1, long v1, long h2, long v2,
     v2 = scratchlong;
   }
 
-  // Clamp to the image boundary.
+  // Cull if the entire rectangle is outside the image.
+  // We know that the coordinates are sorted, by this point.
+  if ( (h1 >= width) || (h2 < 0) || (v1 >= height) || (v2 < 0) )
+    return;
+
+  // Crop to the image boundary.
+  // We know that the coordinates are sorted and overlap the image.
 
   if (h1 < 0) h1 = 0;
-  if (h1 >= width) h1 = width - 1;
-  if (h2 < 0) h2 = 0;
   if (h2 >= width) h2 = width - 1;
-
   if (v1 < 0) v1 = 0;
-  if (v1 >= height) v1 = height - 1;
-  if (v2 < 0) v2 = 0;
   if (v2 >= height) v2 = height - 1;
 
 
@@ -532,9 +566,166 @@ void imgcjt::gfxplane::helper_line(long h1, long v1, long h2, long v2,
 void imgcjt::gfxplane::helper_copy(gfxplane &src, long h1, long v1,
   long h2, long v2, long hdest, long vdest, bool want_blend)
 {
-  // FIXME - NYI.
-  // Do bounds checking on source and destination, clip, and then iterate
-  // in the same manner as the rectangle code.
+  long scratchlong, hdest2, vdest2;
+  long hidx, vidx;
+  uint64_t srcrowstart, srcoset, srcpitch, dstrowstart, dstoset, scratch64;
+  uint64_t srcpix, dstpix;
+
+
+  // Force ordering.
+
+  // NOTE - The target is always referenced with respect to h1,v1.
+  // This is not necessarily the upper left corner.
+  // So if we swap either coordinate, we need to adjust the target location.
+
+  if (h1 > h2)
+  {
+    scratchlong = h1;
+    h1 = h2;
+    h2 = scratchlong;
+
+    hdest -= (h2 - h1);
+  }
+
+  if (v1 > v2)
+  {
+    scratchlong = v1;
+    v1 = v2;
+    v2 = scratchlong;
+
+    vdest -= (v2 - v1);
+  }
+
+  // We know that the coordinates are sorted, by this point.
+
+
+  // NOTE - It would be much, much simpler just to iterate and call the
+  // pixel-drawing routine and let it handle clipping. The problem is that
+  // the pixel-drawing routine is much slower.
+
+  // FIXME - It might still be best to do that. The clipping code may still
+  // have bugs; one of them was only caught because of a typo in the test
+  // program.
+
+
+
+  // Cull if the entire rectangle is outside the source image.
+
+  if ( (h1 >= src.width) || (h2 < 0)
+    || (v1 >= src.height) || (v2 < 0) )
+    return;
+
+  // Crop to the source image boundary.
+  // We know that we overlap the source image.
+  // If we change h1 or v1, adjust the target location as well.
+
+  if (h1 < 0)
+  {
+    hdest -= h1;
+    h1 = 0;
+  }
+
+  if (v1 < 0)
+  {
+    vdest -= v1;
+    v1 = 0;
+  }
+
+  if (h2 >= src.width) h2 = src.width - 1;
+  if (v2 >= src.height) v2 = src.height - 1;
+
+
+
+  // Compute the other corner of the destination rectangle.
+  hdest2 = hdest + h2 - h1;
+  vdest2 = vdest + v2 - v1;
+
+  // Cull if the entire rectangle is outside the destination image.
+
+  if ( (hdest >= width) || (hdest2 < 0)
+    || (vdest >= height) || (vdest2 < 0) )
+    return;
+
+  // Crop to the destination image boundary.
+  // If we change any coordinates, adjust the source location as well.
+  // This will never swap the source location coordinates, since we have a
+  // nonzero span on the destination image.
+
+  if (hdest < 0)
+  {
+    h1 -= hdest;
+    hdest = 0;
+  }
+
+  if (vdest < 0)
+  {
+    v1 -= vdest;
+    vdest = 0;
+  }
+
+  if (hdest2 >= width)
+  {
+    h2 -= hdest2 - (width - 1);
+    hdest2 = width - 1; // We don't actually use this, but keep it updated.
+  }
+
+  if (vdest2 >= height)
+  {
+    v2 -= vdest2 - (height - 1);
+    vdest2 = height - 1; // We don't actually use this, but keep it updated.
+  }
+
+
+  // Cull if destination cropping moved the source outside the source image.
+
+  if ( (h1 >= src.width) || (h2 < 0)
+    || (v1 >= src.height) || (v2 < 0) )
+    return;
+
+
+
+  // Perform the copy, optionally blending.
+  // NOTE - Counting on optimization to pull the "if" statement outside
+  // the loop.
+
+  srcpitch = src.pitch;
+
+  srcrowstart = v1;
+  srcrowstart *= srcpitch;
+  scratch64 = h1;
+  srcrowstart += scratch64;
+
+  dstrowstart = vdest;
+  dstrowstart *= pitch;
+  scratch64 = hdest;
+  dstrowstart += scratch64;
+
+  for (vidx = v1; vidx <= v2; vidx++)
+  {
+    srcoset = srcrowstart;
+    dstoset = dstrowstart;
+
+    for (hidx = h1; hidx <= h2; hidx++)
+    {
+      srcpix = src.pixdata[srcoset];
+      if (want_blend)
+      {
+        dstpix = pixdata[dstoset];
+        dstpix = pix_alpha_blend(srcpix, dstpix, maxval);
+        pixdata[dstoset] = dstpix;
+      }
+      else
+        pixdata[dstoset] = srcpix;
+
+      srcoset++;
+      dstoset++;
+    }
+
+    srcrowstart += srcpitch;
+    dstrowstart += pitch;
+  }
+
+  // Done.
 }
 
 

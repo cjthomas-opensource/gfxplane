@@ -43,6 +43,13 @@ uint64_t pix_from_argb_components(
 void argb_components_from_pix(uint64_t pixval,
   uint16_t &a, uint16_t &r, uint16_t &g, uint16_t &b);
 
+// These are used when processing indexed colourmaps, among other things.
+// The idea is to keep implementation details opaque while avoiding full
+// component extraction/packing.
+uint64_t pix_merge_alpha_rgb(uint64_t alpha_src, uint64_t rgb_src);
+void pix_split_alpha_rgb(uint64_t pixval,
+  uint64_t &alpha_part, uint64_t &rgb_part);
+
 // NOTE - By convention, alpha 0 is transparent and alpha 1 is opaque.
 // We need to explicitly specify the maximum value for alpha.
 uint64_t pix_alpha_blend(uint64_t pixover, uint64_t pixunder, uint16_t maxval);
@@ -89,6 +96,9 @@ public:
 
 
   // Miscellaneous.
+
+  // All blending operations assume consistent maxval values.
+  // The user can call this to rescale an image's components if necessary.
   void rescale_maxval(uint16_t new_maxval);
 
 

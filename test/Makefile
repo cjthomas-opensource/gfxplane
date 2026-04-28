@@ -22,6 +22,7 @@ clean:
 	rm -f conlife
 	rm -f grad
 	rm -f line
+	rm -f rectblit
 
 outclean:
 	rm -f output/*
@@ -31,6 +32,7 @@ run: all
 	./conlife
 	./grad
 	./line
+	./rectblit
 
 
 # Mandelbrot set generator.
@@ -50,6 +52,10 @@ grad: grad.cpp
 # Line-drawing tests.
 line: line.cpp
 	$(GPP) $(CFLAGS) line.cpp $(LDFLAGS) -o line
+
+# Rectangle and compositing tests.
+rectblit: rectblit.cpp
+	$(GPP) $(CFLAGS) rectblit.cpp $(LDFLAGS) -o rectblit
 
 
 #
