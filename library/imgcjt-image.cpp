@@ -19,6 +19,11 @@ using namespace imgcjt;
 #define AA_YES true
 #define AA_NO false
 
+// Behavior switches.
+
+// Copy/blend blit implementation.
+#define USE_SIMPLE_COPY 0
+
 
 
 //
@@ -566,10 +571,15 @@ void imgcjt::gfxplane::helper_line(long h1, long v1, long h2, long v2,
 void imgcjt::gfxplane::helper_copy(gfxplane &src, long h1, long v1,
   long h2, long v2, long hdest, long vdest, bool want_blend)
 {
-  long scratchlong, hdest2, vdest2;
+  long scratchlong;
   long hidx, vidx;
+#if USE_SIMPLE_COPY
+  long hdelta, vdelta;
+#else
+  long hdest2, vdest2;
   uint64_t srcrowstart, srcoset, srcpitch, dstrowstart, dstoset, scratch64;
   uint64_t srcpix, dstpix;
+#endif
 
 
   // Force ordering.
@@ -597,6 +607,36 @@ void imgcjt::gfxplane::helper_copy(gfxplane &src, long h1, long v1,
   }
 
   // We know that the coordinates are sorted, by this point.
+
+
+#if USE_SIMPLE_COPY
+
+  // Simple but slow method.
+  // NOTE - This iterates across off-image portions, so it will be extra-slow
+  // when copying regions that would have been clipped.
+
+  // NOTE - This isn't quite equivalent to proper clipping. If the source is
+  // off-image, the destination is still written (with the default colour).
+
+  hdelta = hdest - h1;
+  vdelta = vdest - v1;
+
+  // Perform the copy, optionally blending.
+  // NOTE - Counting on optimization to pull the "if" statement outside
+  // the loop.
+
+  for (vidx = v1; vidx <= v2; vidx++)
+    for (hidx = h1; hidx <= h2; hidx++)
+      if (want_blend)
+        blendpix( hidx + hdelta, vidx + vdelta, src.getpix(hidx,vidx) );
+      else
+        setpix( hidx + hdelta, vidx + vdelta, src.getpix(hidx,vidx) );
+
+#else
+
+  // Method that avoids using the pixel-access functions.
+  // The problem is that the clipping code is a pain to fully test for bugs.
+  // I think I got them all but I still don't trust it.
 
 
   // NOTE - It would be much, much simpler just to iterate and call the
@@ -726,6 +766,8 @@ void imgcjt::gfxplane::helper_copy(gfxplane &src, long h1, long v1,
   }
 
   // Done.
+
+#endif
 }
 
 

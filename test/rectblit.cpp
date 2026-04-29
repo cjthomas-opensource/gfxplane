@@ -215,7 +215,33 @@ void do_glyph_test(gfxplane &img, gfxplane &glyph, string prefix)
   write_ppm(img, prefix + "blend.ppm");
 
 
-  // Incomplete copies from the glyph itself.
+  // Copying; Incomplete copies from the glyph itself.
+
+  make_background(img);
+
+  // Edges of both the glyph and the destination.
+
+  img.copyfrom(glyph, posmore, 0, tmax+posmore, tmax, WIDTH-posmore, posv1);
+  img.copyfrom(glyph, posless, 0, tmax+posless, tmax, WIDTH-posless, posv2);
+
+  img.copyfrom(glyph, -posmore, 0, tmax-posmore, tmax, -posless, posv1);
+  img.copyfrom(glyph, -posless, 0, tmax-posless, tmax, -posmore, posv2);
+
+  img.copyfrom(glyph, 0, posmore, tmax, tmax+posmore, posh1, HEIGHT-posmore);
+  img.copyfrom(glyph, 0, posless, tmax, tmax+posless, posh2, HEIGHT-posless);
+
+  img.copyfrom(glyph, 0, -posmore, tmax, tmax-posmore, posh1, -posless);
+  img.copyfrom(glyph, 0, -posless, tmax, tmax-posless, posh2, -posmore);
+
+  // Off-image on the source.
+  img.copyfrom(glyph, -TILESIZE, -TILESIZE, -1, -1, posh1, posv1);
+  img.copyfrom(glyph, TILESIZE, TILESIZE, TILESIZE+tmax, TILESIZE+tmax,
+    posh2, posv2);
+
+  write_ppm(img, prefix + "offcopy.ppm");
+
+
+  // Blending; Incomplete copies from the glyph itself.
 
   make_background(img);
 
@@ -234,9 +260,9 @@ void do_glyph_test(gfxplane &img, gfxplane &glyph, string prefix)
   img.blendfrom(glyph, 0, -posless, tmax, tmax-posless, posh2, -posmore);
 
   // Off-image on the source.
-  img.blendfrom(glyph, -TILESIZE, -TILESIZE, -1, -1, posh1, posh1);
+  img.blendfrom(glyph, -TILESIZE, -TILESIZE, -1, -1, posh1, posv1);
   img.blendfrom(glyph, TILESIZE, TILESIZE, TILESIZE+tmax, TILESIZE+tmax,
-    posh2, posh2);
+    posh2, posv2);
 
   write_ppm(img, prefix + "offblend.ppm");
 }
