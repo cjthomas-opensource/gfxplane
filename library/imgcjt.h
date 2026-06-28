@@ -178,7 +178,6 @@ bool write_pam(gfxplane &src, std::string filename);
 // GRAYSCALE_ALPHA, RGB, or RGB_ALPHA).
 // Generates an opaque alpha channel if none is provided.
 // For binary PGM, PPM, or PAM, assumes big-endian format.
-// Writes to cerr on failure.
 gfxplane *read_ppm(std::string filename);
 
 // As above but takes colour from the first file and alpha from the second.
