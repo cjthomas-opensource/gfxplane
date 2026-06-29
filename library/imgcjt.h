@@ -28,6 +28,8 @@ namespace imgcjt
 // This is "transparent black" for any bit depth.
 const uint64_t defaultpixval = 0;
 
+// NOTE - By convention alpha is "opacity", with 0 transparent.
+
 
 //
 // Pixel Functions
